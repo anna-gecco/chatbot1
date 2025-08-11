@@ -1,60 +1,201 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="de">
 <head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>FAQ Chatbot</title>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>FAQ-Chatbot Widget</title>
 <style>
-    body { font-family: Arial, sans-serif; background: #f5f5f5; }
-    #chatbox { width: 400px; max-width: 100%; margin: 20px auto; background: white; border-radius: 10px; padding: 10px; box-shadow: 0 0 10px rgba(0,0,0,0.1); }
-    #messages { height: 300px; overflow-y: auto; border: 1px solid #ccc; padding: 5px; margin-bottom: 10px; }
-    .message { margin: 5px 0; }
-    .user { font-weight: bold; color: blue; }
-    .bot { font-weight: bold; color: green; }
-    #userInput { width: 75%; padding: 5px; }
-    button { padding: 5px 10px; }
+  /* Einfaches Styling für das Chat-Widget */
+  .chat-button {
+    position: fixed; right: 24px; bottom: 24px;
+    background:#0b5cff; color:#fff; border:none; border-radius:50%;
+    width:64px; height:64px; font-size:28px; cursor:pointer; box-shadow:0 6px 18px rgba(11,92,255,.25);
+  }
+  .chat-window {
+    position: fixed; right: 24px; bottom: 96px; width:360px; max-height:70vh;
+    background:#fff; border-radius:12px; box-shadow:0 10px 40px rgba(0,0,0,.12); overflow:hidden;
+    display:flex; flex-direction:column; font-family:Arial, sans-serif;
+  }
+  .chat-header { padding:12px 16px; background:#0b5cff; color:#fff; font-weight:600; }
+  .messages { padding:12px; overflow:auto; flex:1; background:#f7f9ff; }
+  .msg { margin-bottom:10px; }
+  .msg.user { text-align:right; }
+  .msg .bubble { display:inline-block; padding:8px 12px; border-radius:12px; max-width:80%; }
+  .bubble.user { background:#0b5cff; color:#fff; }
+  .bubble.bot { background:#eef2ff; color:#000; }
+  .chat-input { display:flex; padding:10px; border-top:1px solid #eee; }
+  .chat-input input { flex:1; padding:8px 10px; border-radius:8px; border:1px solid #ddd; }
+  .chat-input button { margin-left:8px; padding:8px 12px; background:#0b5cff; color:#fff; border:none; border-radius:8px; }
+  .small { font-size:12px; color:#666; margin-top:6px; }
 </style>
 </head>
 <body>
-<div id="chatbox">
-    <h3>FAQ Chatbot</h3>
-    <div id="messages"></div>
-    <input id="userInput" type="text" placeholder="Frage eingeben..." onkeydown="if(event.key==='Enter') sendMessage()">
-    <button onclick="sendMessage()">Senden</button>
+<button id="openChat" class="chat-button" title="Chat">:sprechblase:</button>
+<div id="chat" class="chat-window" style="display:none;">
+  <div class="chat-header">Fachschul-Chatbot</div>
+  <div id="messages" class="messages"></div>
+  <div style="padding:8px 12px;">
+    <div class="small">Antworten stammen vorrangig aus unserer FAQ.</div>
+  </div>
+  <div class="chat-input">
+    <input id="userInput" type="text" placeholder="Stelle eine Frage..." />
+    <button id="sendBtn">Senden</button>
+  </div>
 </div>
 <script>
-// Beispiel-FAQ-Daten
-const faqs = [
-    { frage: "Was sind eure Öffnungszeiten?", antwort: "Wir haben Montag bis Freitag von 9:00 bis 17:00 Uhr geöffnet." },
-    { frage: "Wo befindet sich die Schule?", antwort: "Unsere Schule befindet sich in der Musterstraße 123, 12345 Musterstadt." },
-    { frage: "Wie kann ich mich anmelden?", antwort: "Du kannst dich über unser Online-Formular auf der Webseite anmelden." }
-];
-// Funktion zum Nachrichtensenden
-function sendMessage() {
-    const input = document.getElementById('userInput');
-    const userText = input.value.trim();
-    if (userText === "") return;
-    appendMessage(userText, 'user');
-    input.value = "";
-    // Antwort aus FAQ finden
-    const antwort = findeAntwort(userText);
-    appendMessage(antwort, 'bot');
+/* ---------- Hilfsfunktionen: Text aufbereiten, Tokenize, Stopwords ---------- */
+const stopwords = new Set([
+  "und","oder","der","die","das","ein","eine","in","im","am","zu","mit","ist","sind","wie",
+  "auf","für","den","dem","von","an","nicht","du","ich","wir","ihr","sie","es","bei","auch"
+]);
+function tokenize(text){
+  return text.toLowerCase()
+    .replace(/[^a-zäöüß0-9\s]/g,' ')
+    .split(/\s+/)
+    .filter(t=>t && !stopwords.has(t));
 }
-// Nachricht im Chatfenster anzeigen
-function appendMessage(text, sender) {
-    const messagesDiv = document.getElementById('messages');
-    const msgDiv = document.createElement('div');
-    msgDiv.classList.add('message', sender);
-    msgDiv.innerHTML = `<span class="${sender}">${sender === 'user' ? 'Du' : 'Bot'}:</span> ${text}`;
-    messagesDiv.appendChild(msgDiv);
-    messagesDiv.scrollTop = messagesDiv.scrollHeight;
+/* ---------- TF-IDF Vorberechnung (client-side) ---------- */
+let faqs = [];           // loaded faq objects
+let faqVectors = [];     // Map<term, weight>
+let idf = {};            // idf per term
+let vocab = new Set();
+async function loadFaqs(){
+  try {
+    const res = await fetch('faq.json');
+    if(!res.ok) throw new Error('faq.json nicht gefunden');
+    faqs = await res.json();
+    buildTfIdf(faqs);
+  } catch(e){
+    console.error('FAQ-Laden fehlgeschlagen:', e);
+    showSystemMsg("FAQ konnte nicht geladen werden. Bitte faq.json prüfen.");
+  }
 }
-// Antwort suchen
-function findeAntwort(frage) {
-    const frageLower = frage.toLowerCase();
-    const eintrag = faqs.find(f => frageLower.includes(f.frage.toLowerCase()));
-    return eintrag ? eintrag.antwort : "Tut mir leid, dazu habe ich keine passende Antwort gefunden.";
+function buildTfIdf(docs){
+  const N = docs.length;
+  const docTermCounts = [];
+  const docFreq = {}; // document frequency per term
+  // count terms
+  docs.forEach((d,i)=>{
+    const tokens = tokenize(d.frage || '');
+    const counts = {};
+    tokens.forEach(t=>{
+      counts[t] = (counts[t]||0)+1;
+    });
+    docTermCounts[i] = counts;
+    Object.keys(counts).forEach(t=>{
+      docFreq[t] = (docFreq[t]||0)+1;
+      vocab.add(t);
+    });
+  });
+  // compute idf
+  Object.keys(docFreq).forEach(term=>{
+    idf[term] = Math.log((N+1)/(docFreq[term]+1)) + 1;
+  });
+  // compute tf-idf vectors (normalized)
+  faqVectors = docTermCounts.map(counts=>{
+    const vec = {};
+    let norm = 0;
+    Object.keys(counts).forEach(term=>{
+      const tf = counts[term]; // raw count
+      const w = tf * (idf[term] || 0);
+      vec[term] = w;
+      norm += w*w;
+    });
+    norm = Math.sqrt(norm) || 1;
+    // normalize
+    Object.keys(vec).forEach(term => vec[term] /= norm);
+    return vec;
+  });
 }
+/* ---------- Cosine similarity between sparse vectors ---------- */
+function cosineSimilarity(vecA, vecB){
+  // vec: object {term: weight}
+  let dot = 0;
+  for(const t in vecA){
+    if(vecB[t]) dot += vecA[t]*vecB[t];
+  }
+  // norms are 1 after normalization
+  return dot; // because vectors normalized
+}
+function queryToVector(query){
+  const tokens = tokenize(query);
+  const counts = {};
+  tokens.forEach(t=> counts[t]=(counts[t]||0)+1 );
+  // tf-idf using same idf
+  const vec = {};
+  let norm=0;
+  Object.keys(counts).forEach(term=>{
+    const w = counts[term] * (idf[term] || 0);
+    if(w){
+      vec[term] = w;
+      norm += w*w;
+    }
+  });
+  norm = Math.sqrt(norm) || 1;
+  Object.keys(vec).forEach(t=> vec[t] /= norm);
+  return vec;
+}
+/* ---------- UI: messages ---------- */
+const chat = document.getElementById('chat');
+const openBtn = document.getElementById('openChat');
+const sendBtn = document.getElementById('sendBtn');
+const userInput = document.getElementById('userInput');
+const messages = document.getElementById('messages');
+openBtn.onclick = ()=> chat.style.display = (chat.style.display === 'none') ? 'flex' : 'none';
+sendBtn.onclick = onSend;
+userInput.addEventListener('keydown', (e)=> { if(e.key==='Enter') onSend(); });
+function appendMessage(text, who='bot'){
+  const div = document.createElement('div');
+  div.className = 'msg ' + (who==='user' ? 'user' : 'bot');
+  const bubble = document.createElement('div');
+  bubble.className = 'bubble ' + (who==='user' ? 'user' : 'bot');
+  bubble.innerText = text;
+  div.appendChild(bubble);
+  messages.appendChild(div);
+  messages.scrollTop = messages.scrollHeight;
+}
+function showSystemMsg(text){
+  appendMessage(text,'bot');
+}
+/* ---------- Haupt-Logik: bei Senden prüfen FAQ, sonst Fallback (optional) ---------- */
+async function onSend(){
+  const q = userInput.value.trim();
+  if(!q) return;
+  appendMessage(q,'user');
+  userInput.value = '';
+  // if no faqs loaded
+  if(!faqs || faqs.length===0){
+    showSystemMsg("Keine FAQ geladen.");
+    return;
+  }
+  const qVec = queryToVector(q);
+  // compute similarities
+  let bestIdx = -1, bestScore = 0;
+  for(let i=0;i<faqVectors.length;i++){
+    const s = cosineSimilarity(qVec, faqVectors[i]);
+    if(s > bestScore){ bestScore = s; bestIdx = i; }
+  }
+  console.log('Best score', bestScore.toFixed(3));
+  const THRESH = 0.45; // anpassbar: höher = strengere Übereinstimmung
+  if(bestScore >= THRESH){
+    const answer = faqs[bestIdx].antwort;
+    appendMessage(answer,'bot');
+  } else {
+    // Keine passende FAQ: Angebot / Option: show top 3 suggestions
+    appendMessage("Dazu habe ich nichts Passendes in der FAQ gefunden. Hier sind die ähnlichsten Fragen:", 'bot');
+    // show top-3
+    const sims = faqVectors.map((v,i)=>({i,score:cosineSimilarity(qVec,v)}))
+                         .sort((a,b)=>b.score-a.score)
+                         .slice(0,3);
+    sims.forEach(s=>{
+      const qtext = faqs[s.i].frage;
+      appendMessage(`${(s.score).toFixed(3)} — ${qtext}`, 'bot');
+    });
+    appendMessage("Wenn das nicht hilft, wende dich bitte an den Support oder aktiviere optional die KI‑Antwort (serverseitig).", 'bot');
+  }
+}
+/* ---------- Init ---------- */
+loadFaqs();
 </script>
 </body>
 </html>
