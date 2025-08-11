@@ -3,30 +3,33 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width,initial-scale=1" />
-<title>FAQ-Chatbot Widget</title>
+<title>FAQ + Lokal KI Chatbot</title>
 <style>
-  /* Einfaches Styling für das Chat-Widget */
+  /* Einfaches Chat-Widget-Style */
+  body { font-family: Arial, sans-serif; }
   .chat-button {
     position: fixed; right: 24px; bottom: 24px;
     background:#0b5cff; color:#fff; border:none; border-radius:50%;
-    width:64px; height:64px; font-size:28px; cursor:pointer; box-shadow:0 6px 18px rgba(11,92,255,.25);
+    width:64px; height:64px; font-size:28px; cursor:pointer;
+    box-shadow:0 6px 18px rgba(11,92,255,.25);
   }
   .chat-window {
-    position: fixed; right: 24px; bottom: 96px; width:360px; max-height:70vh;
-    background:#fff; border-radius:12px; box-shadow:0 10px 40px rgba(0,0,0,.12); overflow:hidden;
-    display:flex; flex-direction:column; font-family:Arial, sans-serif;
+    position: fixed; right: 24px; bottom: 96px; width:380px; max-height:72vh;
+    background:#fff; border-radius:12px; box-shadow:0 10px 40px rgba(0,0,0,.12);
+    overflow:hidden; display:flex; flex-direction:column;
   }
   .chat-header { padding:12px 16px; background:#0b5cff; color:#fff; font-weight:600; }
   .messages { padding:12px; overflow:auto; flex:1; background:#f7f9ff; }
   .msg { margin-bottom:10px; }
   .msg.user { text-align:right; }
-  .msg .bubble { display:inline-block; padding:8px 12px; border-radius:12px; max-width:80%; }
+  .bubble { display:inline-block; padding:8px 12px; border-radius:12px; max-width:80%; }
   .bubble.user { background:#0b5cff; color:#fff; }
-  .bubble.bot { background:#eef2ff; color:#000; }
+  .bubble.bot  { background:#eef2ff; color:#000; }
   .chat-input { display:flex; padding:10px; border-top:1px solid #eee; }
   .chat-input input { flex:1; padding:8px 10px; border-radius:8px; border:1px solid #ddd; }
   .chat-input button { margin-left:8px; padding:8px 12px; background:#0b5cff; color:#fff; border:none; border-radius:8px; }
   .small { font-size:12px; color:#666; margin-top:6px; }
+  .meta { font-size:12px; color:#777; padding:8px 12px; }
 </style>
 </head>
 <body>
@@ -34,116 +37,94 @@
 <div id="chat" class="chat-window" style="display:none;">
   <div class="chat-header">Fachschul-Chatbot</div>
   <div id="messages" class="messages"></div>
-  <div style="padding:8px 12px;">
-    <div class="small">Antworten stammen vorrangig aus unserer FAQ.</div>
-  </div>
+  <div class="meta">Antworten vorrangig aus FAQ • Falls nichts passt: lokale KI (Ollama) fragen</div>
   <div class="chat-input">
     <input id="userInput" type="text" placeholder="Stelle eine Frage..." />
     <button id="sendBtn">Senden</button>
   </div>
 </div>
 <script>
-/* ---------- Hilfsfunktionen: Text aufbereiten, Tokenize, Stopwords ---------- */
-const stopwords = new Set([
-  "und","oder","der","die","das","ein","eine","in","im","am","zu","mit","ist","sind","wie",
-  "auf","für","den","dem","von","an","nicht","du","ich","wir","ihr","sie","es","bei","auch"
-]);
+/* ===========================
+   1) Deine FAQ (einfach editieren)
+   =========================== */
+const faqs = [
+  {frage:"Wie melde ich mich an?", antwort:"Du kannst dich über das Online-Portal der Fachschule anmelden."},
+  {frage:"Welche Unterlagen brauche ich?", antwort:"Du benötigst einen Ausweis, Zeugnisse und das Anmeldeformular."},
+  {frage:"Wann beginnt das Schuljahr?", antwort:"Das Schuljahr beginnt am 1. September."},
+  {frage:"Gibt es eine Aufnahmeprüfung?", antwort:"In manchen Fachrichtungen gibt es eine Aufnahmeprüfung."},
+  {frage:"Wie hoch sind die Schulgebühren?", antwort:"Die Gebühren betragen je nach Fachrichtung zwischen 100 und 200 Euro pro Monat."}
+];
+/* ===========================
+   2) Textaufbereitung + stopwords (einfach)
+   =========================== */
+const stopwords = new Set(["und","oder","der","die","das","ein","eine","in","im","am","zu","mit","ist","sind","wie","auf","für","den","dem","von","an","nicht","du","ich","wir","ihr","sie","es","bei","auch"]);
 function tokenize(text){
   return text.toLowerCase()
     .replace(/[^a-zäöüß0-9\s]/g,' ')
     .split(/\s+/)
-    .filter(t=>t && !stopwords.has(t));
+    .filter(t => t && !stopwords.has(t));
 }
-/* ---------- TF-IDF Vorberechnung (client-side) ---------- */
-let faqs = [];           // loaded faq objects
-let faqVectors = [];     // Map<term, weight>
-let idf = {};            // idf per term
-let vocab = new Set();
-async function loadFaqs(){
-  try {
-    const res = await fetch('faq.json');
-    if(!res.ok) throw new Error('faq.json nicht gefunden');
-    faqs = await res.json();
-    buildTfIdf(faqs);
-  } catch(e){
-    console.error('FAQ-Laden fehlgeschlagen:', e);
-    showSystemMsg("FAQ konnte nicht geladen werden. Bitte faq.json prüfen.");
-  }
-}
-function buildTfIdf(docs){
-  const N = docs.length;
+/* ===========================
+   3) TF-IDF Vektoren für FAQ erstellen
+   =========================== */
+let idf = {}, faqVectors = [];
+function buildIndex(){
+  const N = faqs.length;
   const docTermCounts = [];
-  const docFreq = {}; // document frequency per term
-  // count terms
-  docs.forEach((d,i)=>{
-    const tokens = tokenize(d.frage || '');
+  const docFreq = {};
+  for(let i=0;i<N;i++){
+    const tokens = tokenize(faqs[i].frage || '');
     const counts = {};
-    tokens.forEach(t=>{
-      counts[t] = (counts[t]||0)+1;
-    });
-    docTermCounts[i] = counts;
-    Object.keys(counts).forEach(t=>{
-      docFreq[t] = (docFreq[t]||0)+1;
-      vocab.add(t);
-    });
-  });
-  // compute idf
-  Object.keys(docFreq).forEach(term=>{
-    idf[term] = Math.log((N+1)/(docFreq[term]+1)) + 1;
-  });
-  // compute tf-idf vectors (normalized)
-  faqVectors = docTermCounts.map(counts=>{
-    const vec = {};
-    let norm = 0;
-    Object.keys(counts).forEach(term=>{
-      const tf = counts[term]; // raw count
-      const w = tf * (idf[term] || 0);
+    tokens.forEach(t => { counts[t] = (counts[t]||0)+1; });
+    docTermCounts.push(counts);
+    Object.keys(counts).forEach(t => docFreq[t] = (docFreq[t]||0)+1);
+  }
+  Object.keys(docFreq).forEach(term => idf[term] = Math.log((N+1)/(docFreq[term]+1)) + 1);
+  faqVectors = docTermCounts.map(counts => {
+    const vec = {}; let norm = 0;
+    Object.keys(counts).forEach(term => {
+      const w = counts[term] * (idf[term] || 0);
       vec[term] = w;
       norm += w*w;
     });
     norm = Math.sqrt(norm) || 1;
-    // normalize
-    Object.keys(vec).forEach(term => vec[term] /= norm);
+    Object.keys(vec).forEach(t => vec[t] /= norm);
     return vec;
   });
 }
-/* ---------- Cosine similarity between sparse vectors ---------- */
-function cosineSimilarity(vecA, vecB){
-  // vec: object {term: weight}
+buildIndex();
+/* ===========================
+   4) Cosine similarity helpers
+   =========================== */
+function cosineSimilarity(a,b){
   let dot = 0;
-  for(const t in vecA){
-    if(vecB[t]) dot += vecA[t]*vecB[t];
-  }
-  // norms are 1 after normalization
-  return dot; // because vectors normalized
+  for(const t in a) if(b[t]) dot += a[t]*b[t];
+  return dot; // both normalized -> dot is cosine
 }
 function queryToVector(query){
   const tokens = tokenize(query);
   const counts = {};
-  tokens.forEach(t=> counts[t]=(counts[t]||0)+1 );
-  // tf-idf using same idf
-  const vec = {};
-  let norm=0;
-  Object.keys(counts).forEach(term=>{
+  tokens.forEach(t=> counts[t] = (counts[t]||0)+1);
+  const vec = {}; let norm=0;
+  Object.keys(counts).forEach(term => {
     const w = counts[term] * (idf[term] || 0);
-    if(w){
-      vec[term] = w;
-      norm += w*w;
-    }
+    if(w){ vec[term]=w; norm+= w*w; }
   });
   norm = Math.sqrt(norm) || 1;
-  Object.keys(vec).forEach(t=> vec[t] /= norm);
+  Object.keys(vec).forEach(t => vec[t] /= norm);
   return vec;
 }
-/* ---------- UI: messages ---------- */
+/* ===========================
+   5) UI Handling
+   =========================== */
 const chat = document.getElementById('chat');
 const openBtn = document.getElementById('openChat');
 const sendBtn = document.getElementById('sendBtn');
-const userInput = document.getElementById('userInput');
-const messages = document.getElementById('messages');
+const inputEl = document.getElementById('userInput');
+const messagesEl = document.getElementById('messages');
 openBtn.onclick = ()=> chat.style.display = (chat.style.display === 'none') ? 'flex' : 'none';
 sendBtn.onclick = onSend;
-userInput.addEventListener('keydown', (e)=> { if(e.key==='Enter') onSend(); });
+inputEl.addEventListener('keydown', e => { if(e.key==='Enter') onSend(); });
 function appendMessage(text, who='bot'){
   const div = document.createElement('div');
   div.className = 'msg ' + (who==='user' ? 'user' : 'bot');
@@ -151,51 +132,71 @@ function appendMessage(text, who='bot'){
   bubble.className = 'bubble ' + (who==='user' ? 'user' : 'bot');
   bubble.innerText = text;
   div.appendChild(bubble);
-  messages.appendChild(div);
-  messages.scrollTop = messages.scrollHeight;
+  messagesEl.appendChild(div);
+  messagesEl.scrollTop = messagesEl.scrollHeight;
 }
-function showSystemMsg(text){
-  appendMessage(text,'bot');
-}
-/* ---------- Haupt-Logik: bei Senden prüfen FAQ, sonst Fallback (optional) ---------- */
+// Startunterhaltung
+appendMessage("Hallo! Willkommen bei der Fachschule. Möchtest du Informationen zu Anmeldung, Terminen oder Gebühren?", 'bot');
+/* ===========================
+   6) Hauptlogik: FAQ suchen, ansonsten KI-Fallback
+   =========================== */
+const THRESH = 0.45; // anpassbar: höher = strenger
 async function onSend(){
-  const q = userInput.value.trim();
+  const q = inputEl.value.trim();
   if(!q) return;
-  appendMessage(q,'user');
-  userInput.value = '';
-  // if no faqs loaded
-  if(!faqs || faqs.length===0){
-    showSystemMsg("Keine FAQ geladen.");
-    return;
-  }
-  const qVec = queryToVector(q);
-  // compute similarities
-  let bestIdx = -1, bestScore = 0;
+  appendMessage(q, 'user');
+  inputEl.value = '';
+  // FAQ-Suche
+  const qv = queryToVector(q);
+  let bestIdx=-1, bestScore=0;
   for(let i=0;i<faqVectors.length;i++){
-    const s = cosineSimilarity(qVec, faqVectors[i]);
-    if(s > bestScore){ bestScore = s; bestIdx = i; }
+    const s = cosineSimilarity(qv, faqVectors[i]);
+    if(s>bestScore){ bestScore=s; bestIdx=i; }
   }
-  console.log('Best score', bestScore.toFixed(3));
-  const THRESH = 0.45; // anpassbar: höher = strengere Übereinstimmung
+  console.log('bestScore', bestScore.toFixed(3));
   if(bestScore >= THRESH){
-    const answer = faqs[bestIdx].antwort;
-    appendMessage(answer,'bot');
+    appendMessage(faqs[bestIdx].antwort, 'bot');
   } else {
-    // Keine passende FAQ: Angebot / Option: show top 3 suggestions
-    appendMessage("Dazu habe ich nichts Passendes in der FAQ gefunden. Hier sind die ähnlichsten Fragen:", 'bot');
-    // show top-3
-    const sims = faqVectors.map((v,i)=>({i,score:cosineSimilarity(qVec,v)}))
-                         .sort((a,b)=>b.score-a.score)
-                         .slice(0,3);
-    sims.forEach(s=>{
-      const qtext = faqs[s.i].frage;
-      appendMessage(`${(s.score).toFixed(3)} — ${qtext}`, 'bot');
-    });
-    appendMessage("Wenn das nicht hilft, wende dich bitte an den Support oder aktiviere optional die KI‑Antwort (serverseitig).", 'bot');
+    appendMessage("Keine passende FAQ gefunden. Ich frage optional die lokale KI (Ollama).", 'bot');
+    const ai = await askLocalOllama(q);
+    appendMessage(ai, 'bot');
   }
 }
-/* ---------- Init ---------- */
-loadFaqs();
+/* ===========================
+   7) Ollama Request (lokaler Server)
+   Hinweis: funktioniert nur, wenn Ollama lokal läuft.
+   Endpoint: POST http://localhost:11434/api/generate
+   Body: { "model": "...", "prompt": "...", "stream": false }
+   (siehe Ollama-Doku).  [oai_citation:2‡ollama.readthedocs.io](https://ollama.readthedocs.io/en/api/?utm_source=chatgpt.com) [oai_citation:3‡GitHub](https://github.com/ollama/ollama?utm_source=chatgpt.com)
+   =========================== */
+async function askLocalOllama(question){
+  const modelName = "llama2"; // passe an: irmodel, z.B. "llama3.2" oder "llama2"
+  const system = "Du bist ein hilfreicher Assistent für Fachschulen. Antworte knapp und freundlich.";
+  const prompt = system + "\n\nUser: " + question + "\nAssistant:";
+  try {
+    const res = await fetch('http://localhost:11434/api/generate', {
+      method: 'POST',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({ model: modelName, prompt: prompt, stream: false })
+    });
+    if(!res.ok){
+      console.warn('Ollama not ok', res.status, await res.text());
+      return "Die lokale KI antwortet gerade nicht. Bitte stelle sicher, dass Ollama läuft.";
+    }
+    const data = await res.json();
+    // Ollama gibt meist { model, created_at, response, done, ... }
+    if(data && typeof data.response === 'string') return data.response.trim();
+    // Fallback: try other shapes
+    if(data && data.choices && data.choices[0] && data.choices[0].message) return data.choices[0].message.content;
+    return JSON.stringify(data).slice(0,800);
+  } catch(err){
+    console.error('Ollama-Request failed', err);
+    return "Fehler: Lokaler KI-Server nicht erreichbar. (Starte Ollama auf diesem Rechner.)";
+  }
+}
+/* ===========================
+   8) Fertig — Hinweis: wenn du FAQ änderst, rebuild index
+   =========================== */
 </script>
 </body>
 </html>
