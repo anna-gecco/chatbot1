@@ -1,202 +1,80 @@
-<!doctype html>
+<!DOCTYPE html>
 <html lang="de">
 <head>
-<meta charset="utf-8" />
-<meta name="viewport" content="width=device-width,initial-scale=1" />
-<title>FAQ + Lokal KI Chatbot</title>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Dein Fahrsschulbot</title>
 <style>
-  /* Einfaches Chat-Widget-Style */
-  body { font-family: Arial, sans-serif; }
-  .chat-button {
-    position: fixed; right: 24px; bottom: 24px;
-    background:#0b5cff; color:#fff; border:none; border-radius:50%;
-    width:64px; height:64px; font-size:28px; cursor:pointer;
-    box-shadow:0 6px 18px rgba(11,92,255,.25);
-  }
-  .chat-window {
-    position: fixed; right: 24px; bottom: 96px; width:380px; max-height:72vh;
-    background:#fff; border-radius:12px; box-shadow:0 10px 40px rgba(0,0,0,.12);
-    overflow:hidden; display:flex; flex-direction:column;
-  }
-  .chat-header { padding:12px 16px; background:#0b5cff; color:#fff; font-weight:600; }
-  .messages { padding:12px; overflow:auto; flex:1; background:#f7f9ff; }
-  .msg { margin-bottom:10px; }
-  .msg.user { text-align:right; }
-  .bubble { display:inline-block; padding:8px 12px; border-radius:12px; max-width:80%; }
-  .bubble.user { background:#0b5cff; color:#fff; }
-  .bubble.bot  { background:#eef2ff; color:#000; }
-  .chat-input { display:flex; padding:10px; border-top:1px solid #eee; }
-  .chat-input input { flex:1; padding:8px 10px; border-radius:8px; border:1px solid #ddd; }
-  .chat-input button { margin-left:8px; padding:8px 12px; background:#0b5cff; color:#fff; border:none; border-radius:8px; }
-  .small { font-size:12px; color:#666; margin-top:6px; }
-  .meta { font-size:12px; color:#777; padding:8px 12px; }
+    body { font-family: Arial, sans-serif; background: #f5f5f5; }
+    #chatbox { width: 400px; max-width: 100%; margin: 20px auto; background: white; border-radius: 10px; padding: 10px; box-shadow: 0 0 10px rgba(0,0,0,0.1); }
+    #messages { height: 300px; overflow-y: auto; border: 1px solid #ccc; padding: 5px; margin-bottom: 10px; }
+    .message { margin: 5px 0; }
+    .user { font-weight: bold; color: blue; }
+    .bot { font-weight: bold; color: green; }
+    #userInput { width: 75%; padding: 5px; }
+    button { padding: 5px 10px; }
 </style>
 </head>
 <body>
-<button id="openChat" class="chat-button" title="Chat">:sprechblase:</button>
-<div id="chat" class="chat-window" style="display:none;">
-  <div class="chat-header">Fachschul-Chatbot</div>
-  <div id="messages" class="messages"></div>
-  <div class="meta">Antworten vorrangig aus FAQ • Falls nichts passt: lokale KI (Ollama) fragen</div>
-  <div class="chat-input">
-    <input id="userInput" type="text" placeholder="Stelle eine Frage..." />
-    <button id="sendBtn">Senden</button>
-  </div>
+<div id="chatbox">
+    <h3>Dein Fahrschulbot</h3>
+    <div id="messages"></div>
+    <input id="userInput" type="text" placeholder="Antwort eingeben..." onkeydown="if(event.key==='Enter') sendMessage()">
+    <button onclick="sendMessage()">Senden</button>
 </div>
 <script>
-/* ===========================
-   1) Deine FAQ (einfach editieren)
-   =========================== */
+// Beispiel-FAQ-Daten
 const faqs = [
-  {frage:"Wie melde ich mich an?", antwort:"Du kannst dich über das Online-Portal der Fachschule anmelden."},
-  {frage:"Welche Unterlagen brauche ich?", antwort:"Du benötigst einen Ausweis, Zeugnisse und das Anmeldeformular."},
-  {frage:"Wann beginnt das Schuljahr?", antwort:"Das Schuljahr beginnt am 1. September."},
-  {frage:"Gibt es eine Aufnahmeprüfung?", antwort:"In manchen Fachrichtungen gibt es eine Aufnahmeprüfung."},
-  {frage:"Wie hoch sind die Schulgebühren?", antwort:"Die Gebühren betragen je nach Fachrichtung zwischen 100 und 200 Euro pro Monat."}
+    { frage: "öffnungszeiten", antwort: "Wir haben Montag bis Freitag von 9:00 bis 17:00 Uhr geöffnet." },
+    { frage: "standort", antwort: "Unsere Schule befindet sich in der Musterstraße 123, 12345 Musterstadt." },
+    { frage: "anmeldung", antwort: "Du kannst dich über unser Online-Formular auf der Webseite anmelden." }
 ];
-/* ===========================
-   2) Textaufbereitung + stopwords (einfach)
-   =========================== */
-const stopwords = new Set(["und","oder","der","die","das","ein","eine","in","im","am","zu","mit","ist","sind","wie","auf","für","den","dem","von","an","nicht","du","ich","wir","ihr","sie","es","bei","auch"]);
-function tokenize(text){
-  return text.toLowerCase()
-    .replace(/[^a-zäöüß0-9\s]/g,' ')
-    .split(/\s+/)
-    .filter(t => t && !stopwords.has(t));
-}
-/* ===========================
-   3) TF-IDF Vektoren für FAQ erstellen
-   =========================== */
-let idf = {}, faqVectors = [];
-function buildIndex(){
-  const N = faqs.length;
-  const docTermCounts = [];
-  const docFreq = {};
-  for(let i=0;i<N;i++){
-    const tokens = tokenize(faqs[i].frage || '');
-    const counts = {};
-    tokens.forEach(t => { counts[t] = (counts[t]||0)+1; });
-    docTermCounts.push(counts);
-    Object.keys(counts).forEach(t => docFreq[t] = (docFreq[t]||0)+1);
-  }
-  Object.keys(docFreq).forEach(term => idf[term] = Math.log((N+1)/(docFreq[term]+1)) + 1);
-  faqVectors = docTermCounts.map(counts => {
-    const vec = {}; let norm = 0;
-    Object.keys(counts).forEach(term => {
-      const w = counts[term] * (idf[term] || 0);
-      vec[term] = w;
-      norm += w*w;
-    });
-    norm = Math.sqrt(norm) || 1;
-    Object.keys(vec).forEach(t => vec[t] /= norm);
-    return vec;
-  });
-}
-buildIndex();
-/* ===========================
-   4) Cosine similarity helpers
-   =========================== */
-function cosineSimilarity(a,b){
-  let dot = 0;
-  for(const t in a) if(b[t]) dot += a[t]*b[t];
-  return dot; // both normalized -> dot is cosine
-}
-function queryToVector(query){
-  const tokens = tokenize(query);
-  const counts = {};
-  tokens.forEach(t=> counts[t] = (counts[t]||0)+1);
-  const vec = {}; let norm=0;
-  Object.keys(counts).forEach(term => {
-    const w = counts[term] * (idf[term] || 0);
-    if(w){ vec[term]=w; norm+= w*w; }
-  });
-  norm = Math.sqrt(norm) || 1;
-  Object.keys(vec).forEach(t => vec[t] /= norm);
-  return vec;
-}
-/* ===========================
-   5) UI Handling
-   =========================== */
-const chat = document.getElementById('chat');
-const openBtn = document.getElementById('openChat');
-const sendBtn = document.getElementById('sendBtn');
-const inputEl = document.getElementById('userInput');
-const messagesEl = document.getElementById('messages');
-openBtn.onclick = ()=> chat.style.display = (chat.style.display === 'none') ? 'flex' : 'none';
-sendBtn.onclick = onSend;
-inputEl.addEventListener('keydown', e => { if(e.key==='Enter') onSend(); });
-function appendMessage(text, who='bot'){
-  const div = document.createElement('div');
-  div.className = 'msg ' + (who==='user' ? 'user' : 'bot');
-  const bubble = document.createElement('div');
-  bubble.className = 'bubble ' + (who==='user' ? 'user' : 'bot');
-  bubble.innerText = text;
-  div.appendChild(bubble);
-  messagesEl.appendChild(div);
-  messagesEl.scrollTop = messagesEl.scrollHeight;
-}
-// Startunterhaltung
-appendMessage("Hallo! Willkommen bei der Fachschule. Möchtest du Informationen zu Anmeldung, Terminen oder Gebühren?", 'bot');
-/* ===========================
-   6) Hauptlogik: FAQ suchen, ansonsten KI-Fallback
-   =========================== */
-const THRESH = 0.45; // anpassbar: höher = strenger
-async function onSend(){
-  const q = inputEl.value.trim();
-  if(!q) return;
-  appendMessage(q, 'user');
-  inputEl.value = '';
-  // FAQ-Suche
-  const qv = queryToVector(q);
-  let bestIdx=-1, bestScore=0;
-  for(let i=0;i<faqVectors.length;i++){
-    const s = cosineSimilarity(qv, faqVectors[i]);
-    if(s>bestScore){ bestScore=s; bestIdx=i; }
-  }
-  console.log('bestScore', bestScore.toFixed(3));
-  if(bestScore >= THRESH){
-    appendMessage(faqs[bestIdx].antwort, 'bot');
-  } else {
-    appendMessage("Keine passende FAQ gefunden. Ich frage optional die lokale KI (Ollama).", 'bot');
-    const ai = await askLocalOllama(q);
-    appendMessage(ai, 'bot');
-  }
-}
-/* ===========================
-   7) Ollama Request (lokaler Server)
-   Hinweis: funktioniert nur, wenn Ollama lokal läuft.
-   Endpoint: POST http://localhost:11434/api/generate
-   Body: { "model": "...", "prompt": "...", "stream": false }
-   (siehe Ollama-Doku).  [oai_citation:2‡ollama.readthedocs.io](https://ollama.readthedocs.io/en/api/?utm_source=chatgpt.com) [oai_citation:3‡GitHub](https://github.com/ollama/ollama?utm_source=chatgpt.com)
-   =========================== */
-async function askLocalOllama(question){
-  const modelName = "llama2"; // passe an: irmodel, z.B. "llama3.2" oder "llama2"
-  const system = "Du bist ein hilfreicher Assistent für Fachschulen. Antworte knapp und freundlich.";
-  const prompt = system + "\n\nUser: " + question + "\nAssistant:";
-  try {
-    const res = await fetch('http://localhost:11434/api/generate', {
-      method: 'POST',
-      headers: {'Content-Type':'application/json'},
-      body: JSON.stringify({ model: modelName, prompt: prompt, stream: false })
-    });
-    if(!res.ok){
-      console.warn('Ollama not ok', res.status, await res.text());
-      return "Die lokale KI antwortet gerade nicht. Bitte stelle sicher, dass Ollama läuft.";
+// Fester Gesprächsablauf (kann erweitert werden)
+const conversationFlow = [
+    "Hallo! Schön, dass du hier bist. Wie geht es dir heute?",
+    "Super! Möchtest du etwas über unsere Schule erfahren?",
+    "Gerne! Du kannst mich zu unseren Öffnungszeiten, dem Standort oder zur Anmeldung fragen."
+];
+let conversationStep = 0;
+// Chat-Start mit fester Begrüßung
+window.onload = () => {
+    appendMessage(conversationFlow[conversationStep], 'bot');
+    conversationStep++;
+};
+// Nachricht senden
+function sendMessage() {
+    const input = document.getElementById('userInput');
+    const userText = input.value.trim();
+    if (userText === "") return;
+    appendMessage(userText, 'user');
+    input.value = "";
+    // Wenn noch fester Gesprächsablauf läuft
+    if (conversationStep < conversationFlow.length) {
+        setTimeout(() => {
+            appendMessage(conversationFlow[conversationStep], 'bot');
+            conversationStep++;
+        }, 600);
+    } else {
+        // Danach FAQ-Antwort suchen
+        const antwort = findeAntwort(userText);
+        setTimeout(() => appendMessage(antwort, 'bot'), 600);
     }
-    const data = await res.json();
-    // Ollama gibt meist { model, created_at, response, done, ... }
-    if(data && typeof data.response === 'string') return data.response.trim();
-    // Fallback: try other shapes
-    if(data && data.choices && data.choices[0] && data.choices[0].message) return data.choices[0].message.content;
-    return JSON.stringify(data).slice(0,800);
-  } catch(err){
-    console.error('Ollama-Request failed', err);
-    return "Fehler: Lokaler KI-Server nicht erreichbar. (Starte Ollama auf diesem Rechner.)";
-  }
 }
-/* ===========================
-   8) Fertig — Hinweis: wenn du FAQ änderst, rebuild index
-   =========================== */
+// Nachricht anzeigen
+function appendMessage(text, sender) {
+    const messagesDiv = document.getElementById('messages');
+    const msgDiv = document.createElement('div');
+    msgDiv.classList.add('message', sender);
+    msgDiv.innerHTML = `<span class="${sender}">${sender === 'user' ? 'Du' : 'Bot'}:</span> ${text}`;
+    messagesDiv.appendChild(msgDiv);
+    messagesDiv.scrollTop = messagesDiv.scrollHeight;
+}
+// FAQ-Antwort suchen
+function findeAntwort(frage) {
+    const frageLower = frage.toLowerCase();
+    const eintrag = faqs.find(f => frageLower.includes(f.frage.toLowerCase()));
+    return eintrag ? eintrag.antwort : "Tut mir leid, dazu habe ich keine passende Antwort gefunden.";
+}
 </script>
 </body>
 </html>
