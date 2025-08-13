@@ -1,79 +1,131 @@
 <!DOCTYPE html>
 <html lang="de">
 <head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Dein Fahrsschulbot</title>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>F & S Chatbot</title>
 <style>
-    body { font-family: Arial, sans-serif; background: #f5f5f5; }
-    #chatbox { width: 400px; max-width: 100%; margin: 20px auto; background: white; border-radius: 10px; padding: 10px; box-shadow: 0 0 10px rgba(0,0,0,0.1); }
-    #messages { height: 300px; overflow-y: auto; border: 1px solid #ccc; padding: 5px; margin-bottom: 10px; }
-    .message { margin: 5px 0; }
-    .user { font-weight: bold; color: blue; }
-    .bot { font-weight: bold; color: green; }
-    #userInput { width: 75%; padding: 5px; }
-    button { padding: 5px 10px; }
+  body { font-family: Arial, sans-serif; margin:0; }
+  /* Pinke Bubble */
+  #chat-bubble {
+    position: fixed; right: 20px; bottom: 20px; width: 62px; height: 62px;
+    border-radius: 50%; background: #ff4da6; color:#fff; display:flex;
+    align-items:center; justify-content:center; font-weight:700; cursor:pointer;
+    box-shadow:0 10px 30px rgba(255,77,166,.35); z-index: 9999; user-select:none;
+  }
+  /* Fenster */
+  #chatbox {
+    position: fixed; right: 20px; bottom: 92px; width: 360px; max-height: 70vh;
+    display:none; flex-direction:column; background:#fff; border-radius:14px;
+    box-shadow:0 18px 60px rgba(0,0,0,.18); overflow:hidden; z-index: 9999;
+  }
+  .header { background:#ff4da6; color:#fff; padding:12px 14px; font-weight:700; display:flex; justify-content:space-between; }
+  .messages { padding:12px; overflow:auto; flex:1; background:#fff6fb; }
+  .msg { margin: 8px 0; }
+  .bubble { display:inline-block; padding:8px 12px; border-radius:12px; max-width:80%; line-height:1.35; }
+  .bot   .bubble { background:#ffe1ef; color:#000; }
+  .user  .bubble { background:#ff4da6; color:#fff; float:right; }
+  .input { display:flex; border-top:1px solid #f0c6d9; }
+  #userInput { flex:1; padding:10px; border:0; outline:none; }
+  #sendBtn  { border:0; background:#ff4da6; color:#fff; padding:0 14px; cursor:pointer; }
+  .meta { font-size:12px; color:#7a4660; padding:6px 12px; background:#fff; border-top:1px dashed #f3c7dc; }
 </style>
 </head>
 <body>
+<div id="chat-bubble" title="F & S">F & S</div>
 <div id="chatbox">
-    <h3>Dein Fahrschulbot</h3>
-    <div id="messages"></div>
-    <input id="userInput" type="text" placeholder="Antwort eingeben..." onkeydown="if(event.key==='Enter') sendMessage()">
-    <button onclick="sendMessage()">Senden</button>
+  <div class="header">
+    F & S
+    <span style="cursor:pointer" onclick="toggleChat()">:starkes_malzeichen_x:</span>
+  </div>
+  <div id="messages" class="messages"></div>
+  <div class="meta">Zuerst Gespräch · dann FAQ · wenn nichts passt → Server (RAG)</div>
+  <div class="input">
+    <input id="userInput" type="text" placeholder="Schreibe etwas…" onkeydown="if(event.key==='Enter') sendMessage()" />
+    <button id="sendBtn" onclick="sendMessage()">Senden</button>
+  </div>
 </div>
 <script>
-// Beispiel-FAQ-Daten
-const faqs = [
-    { frage: "öffnungszeiten", antwort: "Wir haben Montag bis Freitag von 9:00 bis 17:00 Uhr geöffnet." },
-    { frage: "standort", antwort: "Unsere Schule befindet sich in der Musterstraße 123, 12345 Musterstadt." },
-    { frage: "anmeldung", antwort: "Du kannst dich über unser Online-Formular auf der Webseite anmelden." }
-];
-// Fester Gesprächsablauf (kann erweitert werden)
+// ===== 0) Konfiguration =====
+const BACKEND_URL = ""; // leer = gleicher Origin, sonst z.B. "https://dein-server.de"
+const CHAT_ENDPOINT = (BACKEND_URL || "") + "/chat";
+// ===== 1) Gesprächsleitfaden (anpassen) =====
 const conversationFlow = [
-    "Hallo! Schön, dass du hier bist. Wie geht es dir heute?",
-    "Super! Möchtest du etwas über unsere Schule erfahren?",
-    "Gerne! Du kannst mich zu unseren Öffnungszeiten, dem Standort oder zur Anmeldung fragen."
+  "Hallo! Willkommen bei der Fachschule :winken: Wie kann ich dich am besten unterstützen – geht es um Anmeldung, Termine oder Kosten?",
+  "Alles klar. Ich beantworte zuerst typische Fragen direkt hier – und wenn es spezieller wird, schaue ich in unsere Unterlagen.",
+  "Frag mich gern zu Öffnungszeiten, Standort, Anmeldung, Kosten oder Kontakt. Los geht’s!"
 ];
-let conversationStep = 0;
-// Chat-Start mit fester Begrüßung
-window.onload = () => {
-    appendMessage(conversationFlow[conversationStep], 'bot');
-    conversationStep++;
-};
-// Nachricht senden
-function sendMessage() {
-    const input = document.getElementById('userInput');
-    const userText = input.value.trim();
-    if (userText === "") return;
-    appendMessage(userText, 'user');
-    input.value = "";
-    // Wenn noch fester Gesprächsablauf läuft
-    if (conversationStep < conversationFlow.length) {
-        setTimeout(() => {
-            appendMessage(conversationFlow[conversationStep], 'bot');
-            conversationStep++;
-        }, 600);
-    } else {
-        // Danach FAQ-Antwort suchen
-        const antwort = findeAntwort(userText);
-        setTimeout(() => appendMessage(antwort, 'bot'), 600);
-    }
+let step = 0;
+// ===== 2) FAQ (mind. 5 Einträge – anpassen) =====
+const faqs = [
+  {k:"öffnungszeiten", a:"Wir haben Montag bis Freitag von 9:00 bis 17:00 Uhr geöffnet."},
+  {k:"standort",       a:"Unsere Schule befindet sich in der Musterstraße 123, 12345 Musterstadt."},
+  {k:"anmeldung",      a:"Du kannst dich über unser Online-Formular anmelden. Bei Fragen hilft unser Sekretariat."},
+  {k:"kosten",         a:"Die Kosten variieren nach Fachrichtung. Eine Übersicht findest du auf unserer Webseite."},
+  {k:"kontakt",        a:"Du erreichst uns per E-Mail unter info@schule.de oder telefonisch unter 01234 567890."},
+  {k:"aufnahmeprüfung",a:"In manchen Fachrichtungen gibt es eine Aufnahmeprüfung – Details stehen in den Infoblättern."}
+];
+// sehr einfache Keyword-Suche (kannst du ersetzen)
+function faqLookup(q) {
+  const t = q.toLowerCase();
+  // Treffer, wenn das Keyword vorkommt (oder sehr ähnlich)
+  let best = null;
+  for (const f of faqs) {
+    if (t.includes(f.k)) { best = f.a; break; }
+  }
+  return best;
 }
-// Nachricht anzeigen
-function appendMessage(text, sender) {
-    const messagesDiv = document.getElementById('messages');
-    const msgDiv = document.createElement('div');
-    msgDiv.classList.add('message', sender);
-    msgDiv.innerHTML = `<span class="${sender}">${sender === 'user' ? 'Du' : 'Bot'}:</span> ${text}`;
-    messagesDiv.appendChild(msgDiv);
-    messagesDiv.scrollTop = messagesDiv.scrollHeight;
+// ===== 3) UI =====
+const bubble = document.getElementById("chat-bubble");
+const box    = document.getElementById("chatbox");
+const msgs   = document.getElementById("messages");
+const input  = document.getElementById("userInput");
+bubble.addEventListener("click", toggleChat);
+function toggleChat() {
+  box.style.display = (box.style.display === "none" || !box.style.display) ? "flex" : "none";
+  if (box.style.display === "flex" && step === 0) {
+    append("bot", conversationFlow[step++]);
+  }
 }
-// FAQ-Antwort suchen
-function findeAntwort(frage) {
-    const frageLower = frage.toLowerCase();
-    const eintrag = faqs.find(f => frageLower.includes(f.frage.toLowerCase()));
-    return eintrag ? eintrag.antwort : "Tut mir leid, dazu habe ich keine passende Antwort gefunden.";
+function append(who, text) {
+  const row = document.createElement("div");
+  row.className = "msg " + who;
+  const b = document.createElement("div");
+  b.className = "bubble";
+  b.textContent = text;
+  row.appendChild(b);
+  msgs.appendChild(row);
+  msgs.scrollTop = msgs.scrollHeight;
+}
+async function sendMessage() {
+  const text = (input.value || "").trim();
+  if (!text) return;
+  append("user", text);
+  input.value = "";
+  // 1) Gesprächsleitfaden (falls noch nicht durch)
+  if (step < conversationFlow.length) {
+    setTimeout(() => append("bot", conversationFlow[step++]), 500);
+    return;
+  }
+  // 2) FAQ zuerst
+  const faqAns = faqLookup(text);
+  if (faqAns) {
+    setTimeout(() => append("bot", faqAns), 400);
+    return;
+  }
+  // 3) Fallback: Backend (RAG)
+  append("bot", "Ich prüfe unsere Unterlagen für dich …");
+  try {
+    const res = await fetch(CHAT_ENDPOINT, {
+      method: "POST",
+      headers: {"Content-Type":"application/json"},
+      body: JSON.stringify({ message: text })
+    });
+    const data = await res.json();
+    append("bot", data.answer || "Ich konnte leider nichts Passendes finden.");
+  } catch (e) {
+    append("bot", "Fehler beim Kontakt zum Server. Bitte später erneut versuchen.");
+  }
 }
 </script>
 </body>
